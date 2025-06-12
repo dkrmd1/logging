@@ -18,9 +18,16 @@ use Filament\Tables\Actions\EditAction;
 use Filament\Tables\Actions\ViewAction;
 use Filament\Tables\Actions\DeleteBulkAction;
 use Filament\Tables\Actions\BulkActionGroup;
-use Illuminate\Database\Eloquent\Builder;
 use Filament\Tables\Actions\Action;
+use Illuminate\Database\Eloquent\Builder;
 use Carbon\Carbon;
+
+use App\Exports\ResetPasswordExport;
+use App\Imports\ResetPasswordImport;
+use Maatwebsite\Excel\Facades\Excel;
+use Filament\Forms\Components\FileUpload;
+use Illuminate\Support\Facades\Storage;
+use Filament\Notifications\Notification;
 
 class ResetPasswordResource extends Resource
 {
@@ -101,6 +108,24 @@ class ResetPasswordResource extends Resource
             ->actions([
                 ViewAction::make()->label('Lihat'),
                 EditAction::make()->label('Edit'),
+                Action::make('ubah_status')
+                    ->label('Ubah Status')
+                    ->icon('heroicon-o-pencil-square')
+                    ->form([
+                        Select::make('status')
+                            ->label('Status Baru')
+                            ->required()
+                            ->options([
+                                'Proses' => 'Proses',
+                                'Selesai' => 'Selesai',
+                                'Gagal' => 'Gagal',
+                            ]),
+                    ])
+                    ->action(function ($record, array $data) {
+                        $record->update(['status' => $data['status']]);
+                    })
+                    ->requiresConfirmation()
+                    ->color('primary'),
             ])
             ->bulkActions([
                 BulkActionGroup::make([
@@ -110,7 +135,7 @@ class ResetPasswordResource extends Resource
             ->headerActions([
                 Action::make('Export PDF per Tanggal')
                     ->icon('heroicon-o-arrow-down-tray')
-                    ->label('Unduh PDF')
+                    ->label('Export PDF')
                     ->form([
                         DatePicker::make('tanggal_awal')->label('Tanggal Awal')->required(),
                         DatePicker::make('tanggal_akhir')->label('Tanggal Akhir')->required(),
@@ -131,11 +156,56 @@ class ResetPasswordResource extends Resource
 
                         $filename = 'laporan-reset-password-' . $data['tanggal_awal'] . '_to_' . $data['tanggal_akhir'] . '.pdf';
 
-                        // FIX: Gunakan output() agar PDF tidak kosong saat diunduh
                         return response()->streamDownload(function () use ($pdf) {
                             echo $pdf->output();
                         }, $filename);
                     }),
+
+                Action::make('Export Excel')
+                    ->icon('heroicon-o-arrow-down-tray')
+                    ->label('Export Excel')
+                    ->form([
+                        DatePicker::make('tanggal_awal')->label('Tanggal Awal')->required(),
+                        DatePicker::make('tanggal_akhir')->label('Tanggal Akhir')->required(),
+                    ])
+                    ->action(function (array $data) {
+                        $export = new ResetPasswordExport(
+                            $data['tanggal_awal'],
+                            $data['tanggal_akhir']
+                        );
+
+                        $fileName = 'reset-password-' . $data['tanggal_awal'] . '_to_' . $data['tanggal_akhir'] . '.xlsx';
+
+                        return Excel::download($export, $fileName);
+                    }),
+
+                Action::make('Import Excel')
+                    ->icon('heroicon-o-arrow-up-tray')
+                    ->label('Import Excel')
+                    ->form([
+                        FileUpload::make('file')
+                            ->label('Pilih File Excel (.xlsx)')
+                            ->acceptedFileTypes(['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'])
+                            ->disk('local')
+                            ->directory('imports')
+                            ->required(),
+                    ])
+                    ->action(function (array $data) {
+                        $path = storage_path('app/' . $data['file']);
+
+                        if (!file_exists($path)) {
+                            throw new \Exception("File tidak ditemukan: $path");
+                        }
+
+                        Excel::import(new ResetPasswordImport, $path);
+
+                        Notification::make()
+                            ->title('Import Berhasil')
+                            ->success()
+                            ->send();
+                    })
+                    ->requiresConfirmation()
+                    ->color('success'),
             ]);
     }
 
